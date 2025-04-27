@@ -1,6 +1,6 @@
 import numpy as np
 from datetime import datetime
-from services.gemini_service import analyze_task_importance
+from services.task_analyzer import analyze_task_importance
 
 def lion_optimization(tasks, num_lions=10, iterations=50):
     if not tasks:
@@ -8,7 +8,7 @@ def lion_optimization(tasks, num_lions=10, iterations=50):
     
     print(f"\nStarting optimization with {len(tasks)} tasks")
     
-    # First, get Gemini analysis for each task
+    # First, get task analysis for each task using our built-in analyzer
     for task in tasks:
         try:
             # Only analyze if we haven't already
@@ -20,8 +20,8 @@ def lion_optimization(tasks, num_lions=10, iterations=50):
                 print(f"Importance Score: {importance_score:.2f}")
                 print(f"Explanation: {explanation}")
         except Exception as e:
-            print(f"Error getting Gemini analysis for task '{task.title}': {str(e)}")
-            # Use default values if Gemini fails
+            print(f"Error analyzing task '{task.title}': {str(e)}")
+            # Use default values if analysis fails
             task.importance_score = 0.5
             task.importance_explanation = "Could not analyze importance"
     
@@ -33,7 +33,7 @@ def lion_optimization(tasks, num_lions=10, iterations=50):
     best_lion = None
     best_fitness = float('-inf')
     
-    # Fitness function considering deadline, creation time, and Gemini importance
+    # Fitness function considering deadline, creation time, and task importance
     def calculate_fitness(priorities):
         fitness = 0
         
@@ -70,14 +70,14 @@ def lion_optimization(tasks, num_lions=10, iterations=50):
             age_in_days = (datetime.utcnow() - task.created_at).total_seconds() / 86400
             creation_weight = min(0.5, age_in_days / 14)  # Max weight after 2 weeks
             
-            # Include Gemini importance score in weight calculation
+            # Use the analyzed importance score
             importance_weight = task.importance_score if task.importance_score is not None else 0.5
             
             # Combine all weights with adjusted importance
             total_weight = (
                 deadline_weight * 0.5 +      # 50% weight to deadlines (most important)
                 creation_weight * 0.2 +      # 20% weight to task age
-                importance_weight * 0.3      # 30% weight to Gemini importance
+                importance_weight * 0.3      # 30% weight to task importance
             )
             
             weights.append(total_weight)
@@ -144,4 +144,4 @@ def lion_optimization(tasks, num_lions=10, iterations=50):
                         0.9 for i in range(num_tasks)])
         
     print(f"\nFinal best fitness: {best_fitness:.2f}")
-    return best_lion 
+    return best_lion

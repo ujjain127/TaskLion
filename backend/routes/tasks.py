@@ -4,6 +4,7 @@ from models.task import Task
 from extensions import db
 from schemas.task import task_schema, tasks_schema
 from services.optimizer import lion_optimization
+from services.task_analyzer import analyze_task_importance
 
 tasks_bp = Blueprint('tasks', __name__)
 
@@ -30,6 +31,15 @@ def create_task():
             priority=data.get('priority', 'medium'),
             completed=data.get('completed', False)
         )
+        
+        # Analyze the task importance immediately on creation
+        try:
+            importance_score, explanation = analyze_task_importance(new_task)
+            new_task.importance_score = importance_score
+            new_task.importance_explanation = explanation
+        except Exception as e:
+            print(f"Error analyzing new task: {str(e)}")
+        
         db.session.add(new_task)
         db.session.commit()
         return task_schema.jsonify(new_task)
@@ -42,17 +52,38 @@ def update_task(task_id):
     try:
         task = Task.query.get_or_404(task_id)
         data = request.json
+        content_changed = False
         
         if 'title' in data:
-            task.title = data['title']
+            if task.title != data['title']:
+                task.title = data['title']
+                content_changed = True
+                
         if 'description' in data:
-            task.description = data['description']
+            if task.description != data['description']:
+                task.description = data['description']
+                content_changed = True
+                
         if 'completed' in data:
             task.completed = data['completed']
+            
         if 'priority' in data:
             task.priority = data['priority']
+            
         if 'deadline' in data:
-            task.deadline = datetime.fromisoformat(data['deadline'].replace('Z', '+00:00')) if data['deadline'] else None
+            new_deadline = datetime.fromisoformat(data['deadline'].replace('Z', '+00:00')) if data['deadline'] else None
+            if task.deadline != new_deadline:
+                task.deadline = new_deadline
+                content_changed = True
+        
+        # Re-analyze importance if the task content has changed
+        if content_changed:
+            try:
+                importance_score, explanation = analyze_task_importance(task)
+                task.importance_score = importance_score
+                task.importance_explanation = explanation
+            except Exception as e:
+                print(f"Error re-analyzing task: {str(e)}")
         
         db.session.commit()
         return task_schema.jsonify(task)
@@ -102,4 +133,52 @@ def optimize_tasks():
         return jsonify(tasks_schema.dump(tasks))
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 400 
+        return jsonify({'error': str(e)}), 400
+
+@tasks_bp.route('/tasks/<int:task_id>/analyze', methods=['GET'])
+def analyze_task(task_id):
+    """Analyze a specific task and return its importance"""
+    try:
+        task = Task.query.get_or_404(task_id)
+        
+        # Analyze the task
+        importance_score, explanation = analyze_task_importance(task)
+        
+        # Update the task in the database
+        task.importance_score = importance_score
+        task.importance_explanation = explanation
+        db.session.commit()
+        
+        # Determine importance category for better UI display
+        importance_category = 'medium'
+        if importance_score >= 0.7:
+            importance_category = 'high'
+        elif importance_score <= 0.4:
+            importance_category = 'low'
+            
+        # Create visual indicators
+        importance_percentage = int(importance_score * 100)
+        
+        # Generate actionable insights based on the score
+        insights = []
+        if importance_score >= 0.7:
+            insights.append("Consider prioritizing this task above others")
+        if task.deadline and (task.deadline - datetime.utcnow()).total_seconds() < 86400 * 3:  # 3 days
+            insights.append("Task deadline is approaching soon")
+        if importance_score <= 0.3:
+            insights.append("This task could potentially be delegated or scheduled for later")
+        
+        # Return the enhanced analysis results
+        return jsonify({
+            'task_id': task.id,
+            'title': task.title,
+            'importance_score': importance_score,
+            'importance_percentage': importance_percentage,
+            'importance_category': importance_category,
+            'explanation': explanation,
+            'insights': insights,
+            'analysis_time': datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 400
